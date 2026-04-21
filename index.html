@@ -13,56 +13,60 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
-    <!-- Firebase -->
+    <!-- Firebase (Compat versions for easier browser support) -->
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
 
     <style>
-        body { background-color: #f8fafc; margin: 0; font-family: sans-serif; }
+        body { background-color: #f8fafc; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         .fade-in { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .loader { border: 3px solid #f3f3f3; border-top: 3px solid #4f46e5; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        /* Prevent layout shift during icon loading */
+        i[data-lucide] { display: inline-block; vertical-align: middle; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useRef } = React;
 
-        // --- SAFE CONFIG LOADER ---
-        let firebaseConfig = {};
-        let isConfigReady = false;
+        // Use global variables provided by environment if available, otherwise use defaults
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "", // Key is provided at runtime by the environment
+            authDomain: "canvas-artifacts.firebaseapp.com",
+            projectId: "canvas-artifacts",
+            storageBucket: "canvas-artifacts.firebasestorage.app",
+            messagingSenderId: "1035543717208",
+            appId: "1:1035543717208:web:7f66a87c1817c803328e46"
+        };
 
-        try {
-            // Check if we are in the canvas environment with provided config
-            if (typeof __firebase_config !== 'undefined') {
-                firebaseConfig = JSON.parse(__firebase_config);
-                isConfigReady = true;
-            }
-        } catch (e) {
-            console.warn("Firebase config not found in environment.");
-        }
-
-        // Initialize Firebase only if config is valid
-        if (isConfigReady) {
-            firebase.initializeApp(firebaseConfig);
-        }
-
-        const auth = isConfigReady ? firebase.auth() : null;
-        const db = isConfigReady ? firebase.firestore() : null;
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'class-tracker-v1';
-
+        const CUSTOM_APP_ID = typeof __app_id !== 'undefined' ? __app_id : "bdelapaz-tracker-unique-v2";
         const SUBJECTS = ["Math", "English / ELA", "Science", "Social Studies", "Elective / PE"];
         const TEACHER_PASSWORD = "teacher123";
 
+        // Initialize Firebase
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+
         const Icon = ({ name, size = 20, className = "" }) => {
+            const iconRef = useRef(null);
             useEffect(() => {
-                if (window.lucide) window.lucide.createIcons();
-            }, [name, size, className]);
-            return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
+                const timer = setTimeout(() => {
+                    if (window.lucide && iconRef.current) {
+                        window.lucide.createIcons({
+                            attrs: { strokeWidth: 2, class: className },
+                            nameAttr: 'data-lucide'
+                        });
+                    }
+                }, 50);
+                return () => clearTimeout(timer);
+            }, [name, className]);
+            return <i ref={iconRef} data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
         };
 
         const App = () => {
@@ -76,29 +80,8 @@
             const [taskName, setTaskName] = useState('');
             const [taskSubject, setTaskSubject] = useState('');
             const [taskDate, setTaskDate] = useState('');
-
-            // If no config, show a friendly setup screen instead of a blank page
-            if (!isConfigReady) {
-                return (
-                    <div className="min-h-screen flex items-center justify-center bg-slate-100 p-6">
-                        <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center">
-                            <div className="text-indigo-600 mb-4 flex justify-center">
-                                <Icon name="alert-triangle" size={48} />
-                            </div>
-                            <h1 className="text-2xl font-bold text-slate-800 mb-2">Setup Required</h1>
-                            <p className="text-slate-600 mb-6">
-                                The tracker is ready, but it needs a <strong>Database Connection</strong> to save assignments on GitHub.
-                            </p>
-                            <div className="bg-slate-50 p-4 rounded-xl text-left text-xs font-mono text-slate-500 border mb-6">
-                                Status: Missing Firebase Config
-                            </div>
-                            <p className="text-sm text-slate-500 italic">
-                                Please return to the chat and ask to "Hard-code my Firebase keys for GitHub".
-                            </p>
-                        </div>
-                    </div>
-                );
-            }
+            const [loading, setLoading] = useState(true);
+            const [initError, setInitError] = useState(null);
 
             useEffect(() => {
                 const initAuth = async () => {
@@ -108,7 +91,12 @@
                         } else {
                             await auth.signInAnonymously();
                         }
-                    } catch (e) { console.error("Auth failed:", e); }
+                    } catch (e) {
+                        console.error("Auth error:", e);
+                        setInitError("Failed to authenticate. Please check your connection.");
+                    } finally {
+                        setLoading(false);
+                    }
                 };
                 initAuth();
                 const unsubscribe = auth.onAuthStateChanged(setUser);
@@ -117,39 +105,39 @@
 
             useEffect(() => {
                 if (!user || view !== 'student') return;
-                const path = `artifacts/${appId}/public/data/assignments`;
+                const path = `artifacts/${CUSTOM_APP_ID}/public/data/assignments`;
                 const unsubscribe = db.collection(path)
                     .where('userId', '==', user.uid)
                     .onSnapshot(snapshot => {
                         const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
                         setAssignments(docs);
-                    }, (err) => console.error("Firestore Error:", err));
+                    }, (err) => console.error("Database Error:", err));
                 return () => unsubscribe();
             }, [user, view]);
 
             useEffect(() => {
                 if (!user || !teacherAuth || view !== 'teacher') return;
-                const path = `artifacts/${appId}/public/data/assignments`;
+                const path = `artifacts/${CUSTOM_APP_ID}/public/data/assignments`;
                 const unsubscribe = db.collection(path)
                     .onSnapshot(snapshot => {
                         const grouped = {};
                         snapshot.docs.forEach(d => {
                             const data = d.data();
                             if (!grouped[data.userId]) {
-                                grouped[data.userId] = { name: data.userName || 'Unknown', tasks: [] };
+                                grouped[data.userId] = { name: data.userName || 'Unnamed Student', tasks: [] };
                             }
                             grouped[data.userId].tasks.push({ id: d.id, ...data });
                         });
                         setAllStudentsData(grouped);
-                    });
+                    }, (err) => console.error("Teacher View Error:", err));
                 return () => unsubscribe();
             }, [user, teacherAuth, view]);
 
             const addAssignment = async (e) => {
                 e.preventDefault();
-                if (!taskName || !taskSubject || !studentName) return alert("Please fill out all fields!");
+                if (!taskName || !taskSubject || !studentName || !user) return;
                 localStorage.setItem('student_display_name', studentName);
-                const path = `artifacts/${appId}/public/data/assignments`;
+                const path = `artifacts/${CUSTOM_APP_ID}/public/data/assignments`;
                 try {
                     await db.collection(path).add({
                         userId: user.uid,
@@ -162,25 +150,51 @@
                     });
                     setTaskName(''); 
                     setTaskDate('');
-                } catch (err) { alert("Error saving assignment."); }
+                } catch (err) {
+                    alert("Error saving assignment.");
+                }
             };
 
             const toggleStatus = async (item) => {
-                const path = `artifacts/${appId}/public/data/assignments/${item.id}`;
+                const path = `artifacts/${CUSTOM_APP_ID}/public/data/assignments/${item.id}`;
                 await db.doc(path).update({
                     status: item.status === 'Missing' ? 'Turned In' : 'Missing'
                 });
             };
 
             const deleteItem = async (id) => {
-                if (confirm("Delete this assignment?")) {
-                    const path = `artifacts/${appId}/public/data/assignments/${id}`;
+                if (window.confirm("Delete this assignment?")) {
+                    const path = `artifacts/${CUSTOM_APP_ID}/public/data/assignments/${id}`;
                     await db.doc(path).delete();
                 }
             };
 
+            if (initError) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4 text-center">
+                        <div className="bg-white p-8 rounded-2xl shadow-sm max-w-sm">
+                            <Icon name="alert-circle" size={48} className="text-rose-500 mx-auto mb-4" />
+                            <h2 className="text-xl font-bold mb-2">Error</h2>
+                            <p className="text-slate-500 mb-6">{initError}</p>
+                            <button onClick={() => window.location.reload()} className="bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold">Retry</button>
+                        </div>
+                    </div>
+                );
+            }
+
+            if (loading) {
+                return (
+                    <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500">
+                        <div className="text-center">
+                            <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                            <p>Connecting to database...</p>
+                        </div>
+                    </div>
+                );
+            }
+
             return (
-                <div className="min-h-screen bg-slate-50">
+                <div className="min-h-screen bg-slate-50 pb-12">
                     <nav className="bg-white border-b border-slate-200 px-4 md:px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
                         <div className="flex items-center gap-2">
                             <div className="bg-indigo-600 p-1.5 rounded-lg text-white">
@@ -188,75 +202,82 @@
                             </div>
                             <span className="font-bold text-lg md:text-xl text-slate-800">ClassTracker</span>
                         </div>
-                        <div className="flex gap-1 md:gap-2">
-                            <button onClick={() => setView('student')} className={`px-3 md:px-4 py-2 rounded-full text-xs md:text-sm font-medium transition-all ${view === 'student' ? 'bg-indigo-100 text-indigo-700' : 'text-slate-500 hover:bg-slate-100'}`}>Student</button>
-                            <button onClick={() => setView('teacher')} className={`px-3 md:px-4 py-2 rounded-full text-xs md:text-sm font-medium transition-all ${view === 'teacher' ? 'bg-indigo-100 text-indigo-700' : 'text-slate-500 hover:bg-slate-100'}`}>Teacher</button>
+                        <div className="flex bg-slate-100 p-1 rounded-xl">
+                            <button onClick={() => setView('student')} className={`px-4 py-2 rounded-lg text-xs md:text-sm font-bold transition-all ${view === 'student' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Student</button>
+                            <button onClick={() => setView('teacher')} className={`px-4 py-2 rounded-lg text-xs md:text-sm font-bold transition-all ${view === 'teacher' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Teacher</button>
                         </div>
                     </nav>
 
-                    <main className="max-w-5xl mx-auto p-4 md:p-6">
+                    <main className="max-w-5xl mx-auto p-4 md:p-6 mt-4">
                         {view === 'student' ? (
                             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8 fade-in">
                                 <div className="space-y-6">
                                     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                                        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-sm uppercase tracking-wider"><Icon name="user" size={16}/> Student Info</h3>
-                                        <input type="text" placeholder="Full Name" value={studentName} onChange={e => setStudentName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-xs uppercase tracking-widest"><Icon name="user" size={14}/> Student Profile</h3>
+                                        <input type="text" placeholder="Your Full Name" value={studentName} onChange={e => setStudentName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all" />
                                     </div>
                                     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                                        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-sm uppercase tracking-wider"><Icon name="plus" size={16}/> New Task</h3>
+                                        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-xs uppercase tracking-widest"><Icon name="plus" size={14}/> Add Missing Task</h3>
                                         <form onSubmit={addAssignment} className="space-y-4">
-                                            <input type="text" placeholder="Assignment Name" value={taskName} onChange={e => setTaskName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" />
-                                            <select value={taskSubject} onChange={e => setTaskSubject(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none">
-                                                <option value="">Select Subject</option>
+                                            <input type="text" placeholder="Assignment Name" value={taskName} onChange={e => setTaskName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                            <select value={taskSubject} onChange={e => setTaskSubject(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500">
+                                                <option value="">Choose Class...</option>
                                                 {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
                                             </select>
-                                            <input type="date" value={taskDate} onChange={e => setTaskDate(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" />
-                                            <button className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 shadow-md">Add to List</button>
+                                            <input type="date" value={taskDate} onChange={e => setTaskDate(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                            <button type="submit" className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all active:scale-95">Add to My List</button>
                                         </form>
                                     </div>
                                 </div>
                                 <div className="lg:col-span-2 space-y-4">
-                                    <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Icon name="list-todo" className="text-indigo-500" /> My Tracker</h2>
-                                    {assignments.length === 0 ? <div className="bg-white p-12 rounded-3xl border-2 border-dashed border-slate-200 text-center text-slate-400">No missing work listed.</div> :
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h2 className="text-xl font-bold text-slate-800">My Missing Work</h2>
+                                        <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-3 py-1 rounded-full">{assignments.filter(a => a.status === 'Missing').length} Items</span>
+                                    </div>
+                                    {assignments.length === 0 ? (
+                                        <div className="bg-white p-16 rounded-3xl border-2 border-dashed border-slate-200 text-center text-slate-400">No items found.</div>
+                                    ) : (
                                         assignments.sort((a,b) => b.timestamp - a.timestamp).map(item => (
                                             <div key={item.id} className={`bg-white p-5 rounded-2xl border-l-4 shadow-sm flex items-center justify-between transition-all hover:shadow-md ${item.status === 'Turned In' ? 'border-emerald-500 opacity-60' : 'border-indigo-500'}`}>
-                                                <div className="flex-1 min-w-0 pr-4">
-                                                    <span className="text-[10px] font-black uppercase bg-slate-100 text-slate-500 px-2 py-0.5 rounded mr-2 inline-block mb-1">{item.subject}</span>
+                                                <div className="flex-1 min-w-0">
+                                                    <span className="text-[10px] font-black uppercase bg-slate-100 text-slate-500 px-2 py-0.5 rounded mb-1 inline-block">{item.subject}</span>
                                                     <h3 className={`font-bold text-lg truncate ${item.status === 'Turned In' ? 'line-through text-slate-400' : 'text-slate-800'}`}>{item.name}</h3>
-                                                    {item.dueDate && <p className="text-xs text-rose-500 font-medium mt-1">Due: {item.dueDate}</p>}
                                                 </div>
-                                                <div className="flex gap-2">
-                                                    <button onClick={() => toggleStatus(item)} className="text-emerald-500 p-1"><Icon name="check-circle" size={32} /></button>
-                                                    <button onClick={() => deleteItem(item.id)} className="text-slate-200 hover:text-rose-500 p-1"><Icon name="trash-2" size={20} /></button>
+                                                <div className="flex items-center gap-3">
+                                                    <button onClick={() => toggleStatus(item)} className={`${item.status === 'Turned In' ? 'text-emerald-500' : 'text-slate-300'} transition-colors`}><Icon name="check-circle" size={32} /></button>
+                                                    <button onClick={() => deleteItem(item.id)} className="text-slate-200 hover:text-rose-500 transition-colors"><Icon name="trash-2" size={20} /></button>
                                                 </div>
                                             </div>
                                         ))
-                                    }
+                                    )}
                                 </div>
                             </div>
                         ) : (
                             <div className="fade-in max-w-2xl mx-auto">
                                 {!teacherAuth ? (
                                     <div className="bg-white p-10 rounded-3xl border border-slate-200 shadow-xl text-center mt-12">
-                                        <Icon name="lock" size={40} className="mx-auto text-indigo-600 mb-4" />
-                                        <h2 className="text-2xl font-bold mb-6 text-slate-800">Teacher Portal</h2>
-                                        <input type="password" placeholder="Password" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl mb-4 outline-none focus:ring-2 focus:ring-indigo-500" />
-                                        <button onClick={() => passwordInput === TEACHER_PASSWORD ? setTeacherAuth(true) : alert("Incorrect")} className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl">Unlock Dashboard</button>
+                                        <Icon name="lock" size={32} className="text-indigo-600 mx-auto mb-4" />
+                                        <h2 className="text-2xl font-bold mb-6">Teacher Portal</h2>
+                                        <input type="password" placeholder="Password" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl mb-4 text-center outline-none focus:ring-2 focus:ring-indigo-500" />
+                                        <button onClick={() => passwordInput === TEACHER_PASSWORD ? setTeacherAuth(true) : alert("Incorrect Password")} className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl active:scale-95 transition-all">Unlock Dashboard</button>
                                     </div>
                                 ) : (
                                     <div className="space-y-6">
-                                        <h2 className="text-2xl font-bold text-slate-800">Class Overview</h2>
+                                        <div className="flex items-center justify-between">
+                                            <h2 className="text-2xl font-bold">Class Overview</h2>
+                                            <button onClick={() => setTeacherAuth(false)} className="text-slate-400 text-sm">Log Out</button>
+                                        </div>
                                         {Object.entries(allStudentsData).map(([uid, data]) => (
-                                            <div key={uid} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-4">
-                                                <div className="p-4 bg-slate-50 border-b flex justify-between items-center font-bold">
+                                            <div key={uid} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-6">
+                                                <div className="p-5 bg-slate-50 border-b font-bold flex justify-between items-center">
                                                     <span>{data.name}</span>
-                                                    <span className="text-rose-500 text-xs">Missing: {data.tasks.filter(t => t.status === 'Missing').length}</span>
+                                                    <span className="text-rose-500 text-xs">{data.tasks.filter(t => t.status === 'Missing').length} Missing</span>
                                                 </div>
-                                                <div className="p-4 space-y-1">
+                                                <div className="p-5 space-y-2">
                                                     {data.tasks.map(t => (
-                                                        <div key={t.id} className="flex justify-between text-sm py-1 border-b border-slate-50 last:border-0">
+                                                        <div key={t.id} className="flex justify-between items-center text-sm p-2 bg-slate-50 rounded-lg">
                                                             <span>[{t.subject}] {t.name}</span>
-                                                            <span className={t.status === 'Turned In' ? 'text-emerald-500' : 'text-rose-500'}>{t.status}</span>
+                                                            <span className={t.status === 'Turned In' ? 'text-emerald-500 font-bold' : 'text-rose-500 font-bold'}>{t.status}</span>
                                                         </div>
                                                     ))}
                                                 </div>
