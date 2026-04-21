@@ -31,7 +31,7 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // Firebase Configuration using environment variables
+        // Use environment variables for configuration if available
         const firebaseConfig = typeof __firebase_config !== 'undefined' 
             ? JSON.parse(__firebase_config) 
             : {
@@ -128,7 +128,7 @@
                             grouped[data.userId].tasks.push({ id: d.id, ...data });
                         });
                         setAllStudentsData(grouped);
-                    }, (err) => console.error("Firestore error:", err));
+                    }, (err) => console.error("Teacher view error:", err));
                 return () => unsubscribe();
             }, [user, teacherAuth, view]);
 
@@ -147,8 +147,7 @@
                         status: 'Missing',
                         timestamp: Date.now()
                     });
-                    setTaskName(''); 
-                    setTaskDate('');
+                    setTaskName(''); setTaskDate('');
                 } catch (err) {
                     console.error("Error adding doc:", err);
                 }
@@ -221,7 +220,7 @@
                                 <div className="lg:col-span-2 space-y-4">
                                     <h2 className="text-xl font-bold text-slate-800">My List</h2>
                                     {assignments.length === 0 ? (
-                                        <div className="bg-white p-12 rounded-3xl border-2 border-dashed border-slate-200 text-center text-slate-400">Your missing work list is empty.</div>
+                                        <div className="bg-white p-12 rounded-3xl border-2 border-dashed border-slate-200 text-center text-slate-400">No work found.</div>
                                     ) : (
                                         assignments.sort((a,b) => b.timestamp - a.timestamp).map(item => (
                                             <div key={item.id} className={`bg-white p-5 rounded-2xl border-l-4 shadow-sm flex items-center justify-between transition-all ${item.status === 'Turned In' ? 'border-emerald-500 opacity-60' : 'border-indigo-500'}`}>
