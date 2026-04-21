@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Class Assignment Tracker</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel to compile React in the browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Firebase (using compat version for easy single-file integration) -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
+    <style>
+        body { background-color: #f8fafc; margin: 0; font-family: sans-serif; }
+        .fade-in { animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        /* Smooth scrolling for mobile */
+        html { scroll-behavior: smooth; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- Firebase Configuration ---
+        const firebaseConfig = JSON.parse(__firebase_config);
+        firebase.initializeApp(firebaseConfig);
+        const auth = firebase.auth();
+        const db = firebase.firestore();
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-tracker-id';
+
+        const SUBJECTS = ["Math", "English / ELA", "Science", "Social Studies", "Elective / PE"];
+        const TEACHER_PASSWORD = "teacher123";
+
+        // Helper to use Lucide icons with the CDN
+        const Icon = ({ name, size = 20, className = "" }) => {
+            useEffect(() => {
+                if (window.lucide) window.lucide.createIcons();
+            }, [name, size, className]);
+            return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
+        };
+
+        const App = () => {
+            const [user, setUser] = useState(null);
+            const [view, setView] = useState('student');
+            const [teacherAuth, setTeacherAuth] = useState(false);
+            const [passwordInput, setPasswordInput] = useState('');
+            const [studentName, setStudentName] = useState(localStorage.getItem('student_display_name') || '');
+            const [assignments, setAssignments] = useState([]);
+            const [allStudentsData, setAllStudentsData] = useState({});
+            const [taskName, setTaskName] = useState('');
+            const [taskSubject, setTaskSubject] = useState('');
+            const [taskDate, setTaskDate] = useState('');
+
+            // 1. Auth Setup
+            useEffect(() => {
+                const initAuth = async () => {
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await auth.signInWithCustomToken(__initial_auth_token);
+                    } else {
+                        await auth.signInAnonymously();
+                    }
+                };
+                initAuth();
+                const unsubscribe = auth.onAuthStateChanged(setUser);
+                return () => unsubscribe();
+            }, []);
+
+            // 2. Student Data Listener
+            useEffect(() => {
+                if (!user || view !== 'student') return;
+                const path = `artifacts/${appId}/public/data/assignments`;
+                const unsubscribe = db.collection(path)
+                    .where('userId', '==', user.uid)
+                    .onSnapshot(snapshot => {
+                        const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+                        setAssignments(docs);
+                    }, (err) => console.error("Firestore Error:", err));
+                return () => unsubscribe();
+            }, [user, view]);
+
+            // 3. Teacher Data Listener
+            useEffect(() => {
+                if (!user || !teacherAuth || view !== 'teacher') return;
+                const path = `artifacts/${appId}/public/data/assignments`;
+                const unsubscribe = db.collection(path)
+                    .onSnapshot(snapshot => {
+                        const grouped = {};
+                        snapshot.docs.forEach(d => {
+                            const data = d.data();
+                            if (!grouped[data.userId]) {
+                                grouped[data.userId] = { name: data.userName || 'Unknown', tasks: [] };
+                            }
+                            grouped[data.userId].tasks.push({ id: d.id, ...data });
+                        });
+                        setAllStudentsData(grouped);
+                    }, (err) => console.error("Teacher Data Error:", err));
+                return () => unsubscribe();
+            }, [user, teacherAuth, view]);
+
+            const addAssignment = async (e) => {
+                e.preventDefault();
+                if (!taskName || !taskSubject || !studentName) return alert("Please fill out all fields!");
+                localStorage.setItem('student_display_name', studentName);
+                const path = `artifacts/${appId}/public/data/assignments`;
+                try {
+                    await db.collection(path).add({
+                        userId: user.uid,
+                        userName: studentName,
+                        name: taskName,
+                        subject: taskSubject,
+                        dueDate: taskDate,
+                        status: 'Missing',
+                        timestamp: Date.now()
+                    });
+                    setTaskName(''); 
+                    setTaskDate('');
+                } catch (err) {
+                    alert("Error saving assignment. Check connection.");
+                }
+            };
+
+            const toggleStatus = async (item) => {
+                const path = `artifacts/${appId}/public/data/assignments/${item.id}`;
+                await db.doc(path).update({
+                    status: item.status === 'Missing' ? 'Turned In' : 'Missing'
+                });
+            };
+
+            const deleteItem = async (id) => {
+                if (confirm("Delete this assignment?")) {
+                    const path = `artifacts/${appId}/public/data/assignments/${id}`;
+                    await db.doc(path).delete();
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-50">
+                    <nav className="bg-white border-b border-slate-200 px-4 md:px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+                        <div className="flex items-center gap-2">
+                            <div className="bg-indigo-600 p-1.5 rounded-lg text-white">
+                                <Icon name="check-circle" size={20} />
+                            </div>
+                            <span className="font-bold text-lg md:text-xl text-slate-800">ClassTracker</span>
+                        </div>
+                        <div className="flex gap-1 md:gap-2">
+                            <button onClick={() => setView('student')} className={`px-3 md:px-4 py-2 rounded-full text-xs md:text-sm font-medium transition-all ${view === 'student' ? 'bg-indigo-100 text-indigo-700' : 'text-slate-500 hover:bg-slate-100'}`}>Student</button>
+                            <button onClick={() => setView('teacher')} className={`px-3 md:px-4 py-2 rounded-full text-xs md:text-sm font-medium transition-all ${view === 'teacher' ? 'bg-indigo-100 text-indigo-700' : 'text-slate-500 hover:bg-slate-100'}`}>Teacher</button>
+                        </div>
+                    </nav>
+
+                    <main className="max-w-5xl mx-auto p-4 md:p-6">
+                        {view === 'student' ? (
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8 fade-in">
+                                <div className="space-y-6">
+                                    <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                                        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-sm uppercase tracking-wider"><Icon name="user" size={16}/> Student Info</h3>
+                                        <input type="text" placeholder="Full Name" value={studentName} onChange={e => setStudentName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
+                                    </div>
+                                    <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
+                                        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-sm uppercase tracking-wider"><Icon name="plus" size={16}/> New Task</h3>
+                                        <form onSubmit={addAssignment} className="space-y-4">
+                                            <input type="text" placeholder="Assignment Name" value={taskName} onChange={e => setTaskName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" />
+                                            <select value={taskSubject} onChange={e => setTaskSubject(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none">
+                                                <option value="">Select Subject</option>
+                                                {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
+                                            </select>
+                                            <input type="date" value={taskDate} onChange={e => setTaskDate(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none" />
+                                            <button className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl hover:bg-indigo-700 shadow-md transition-all">Add to List</button>
+                                        </form>
+                                    </div>
+                                </div>
+                                <div className="lg:col-span-2 space-y-4">
+                                    <div className="flex items-center justify-between px-2">
+                                        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><Icon name="list-todo" className="text-indigo-500" /> My Tracker</h2>
+                                        <span className="text-xs font-bold text-slate-400 bg-slate-100 px-2 py-1 rounded uppercase tracking-widest">{assignments.length} Tasks</span>
+                                    </div>
+                                    {assignments.length === 0 ? <div className="bg-white p-12 rounded-3xl border-2 border-dashed border-slate-200 text-center text-slate-400 font-medium">No missing work listed. Start by adding a task!</div> :
+                                        assignments.sort((a,b) => b.timestamp - a.timestamp).map(item => (
+                                            <div key={item.id} className={`bg-white p-5 rounded-2xl border-l-4 shadow-sm flex items-center justify-between transition-all hover:shadow-md ${item.status === 'Turned In' ? 'border-emerald-500 opacity-60' : 'border-indigo-500'}`}>
+                                                <div className="flex-1 min-w-0 pr-4">
+                                                    <span className="text-[10px] font-black uppercase bg-slate-100 text-slate-500 px-2 py-0.5 rounded mr-2 inline-block mb-1">{item.subject}</span>
+                                                    <h3 className={`font-bold text-lg truncate ${item.status === 'Turned In' ? 'line-through text-slate-400' : 'text-slate-800'}`}>{item.name}</h3>
+                                                    {item.dueDate && <p className="text-xs text-rose-500 font-medium mt-1 flex items-center gap-1"><Icon name="calendar" size={12}/> Due: {item.dueDate}</p>}
+                                                </div>
+                                                <div className="flex gap-2 shrink-0">
+                                                    <button onClick={() => toggleStatus(item)} className={`${item.status === 'Turned In' ? 'text-emerald-500' : 'text-slate-200 hover:text-emerald-500'} transition-colors p-1`}>
+                                                        <Icon name="check-circle" size={32} />
+                                                    </button>
+                                                    <button onClick={() => deleteItem(item.id)} className="text-slate-200 hover:text-rose-500 transition-colors p-1">
+                                                        <Icon name="trash-2" size={20} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    }
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="fade-in max-w-2xl mx-auto">
+                                {!teacherAuth ? (
+                                    <div className="bg-white p-10 rounded-3xl border border-slate-200 shadow-xl text-center mt-12">
+                                        <div className="w-16 h-16 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                                            <Icon name="lock" size={32} />
+                                        </div>
+                                        <h2 className="text-2xl font-bold mb-2 text-slate-800">Teacher Access</h2>
+                                        <p className="text-slate-500 mb-6 text-sm">Enter course password to view all student progress.</p>
+                                        <input type="password" placeholder="Password" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} className="w-full p-4 bg-slate-50 border border-slate-200 rounded-xl mb-4 outline-none focus:ring-2 focus:ring-indigo-500 text-center text-lg" />
+                                        <button onClick={() => passwordInput === TEACHER_PASSWORD ? setTeacherAuth(true) : alert("Incorrect Password")} className="w-full bg-slate-900 text-white font-bold py-4 rounded-xl hover:bg-black transition-all">Unlock Dashboard</button>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-6">
+                                        <div className="flex justify-between items-center px-2">
+                                            <h2 className="text-2xl font-bold text-slate-800">Class Progress</h2>
+                                            <button onClick={() => setTeacherAuth(false)} className="text-xs font-bold text-indigo-600 uppercase">Logout</button>
+                                        </div>
+                                        {Object.entries(allStudentsData).length === 0 ? <p className="text-center text-slate-400 py-10">No students have submitted tasks yet.</p> :
+                                            Object.entries(allStudentsData).map(([uid, data]) => {
+                                                const missingCount = data.tasks.filter(t => t.status === 'Missing').length;
+                                                return (
+                                                    <div key={uid} className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition-all hover:border-indigo-200">
+                                                        <div className="p-4 bg-slate-50 border-b flex justify-between items-center">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="w-10 h-10 bg-indigo-600 rounded-full flex items-center justify-center text-white font-bold uppercase">{data.name.charAt(0)}</div>
+                                                                <span className="font-bold text-slate-800">{data.name}</span>
+                                                            </div>
+                                                            <span className={`px-3 py-1 rounded-full text-xs font-black uppercase ${missingCount > 0 ? 'bg-rose-100 text-rose-600' : 'bg-emerald-100 text-emerald-600'}`}>
+                                                                {missingCount} Missing
+                                                            </span>
+                                                        </div>
+                                                        <div className="p-4 space-y-2">
+                                                            {data.tasks.map(t => (
+                                                                <div key={t.id} className="flex justify-between text-sm py-2 border-b border-slate-50 last:border-0">
+                                                                    <span className="flex items-center gap-2">
+                                                                        <span className="text-slate-400 text-[9px] font-black uppercase tracking-tighter w-12 truncate">[{t.subject.split(' ')[0]}]</span> 
+                                                                        <span className={t.status === 'Turned In' ? 'text-slate-400 italic line-through' : 'font-medium text-slate-700'}>{t.name}</span>
+                                                                    </span>
+                                                                    <span className={`text-[10px] font-bold uppercase ${t.status === 'Turned In' ? 'text-emerald-500' : 'text-rose-500'}`}>{t.status}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })
+                                        }
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </main>
+                    <footer className="text-center p-8 text-[10px] text-slate-300 uppercase tracking-widest font-bold">
+                        Cloud Sync Status: {user ? 'Online' : 'Initializing...'}
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
