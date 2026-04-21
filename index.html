@@ -3,76 +3,159 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Class Assignment Tracker</title>
+<title>ClassTracker</title>
 
 <script src="https://cdn.tailwindcss.com"></script>
+
+<!-- React (no Babel needed now) -->
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 
-<style>
-body { margin: 0; font-family: Arial, sans-serif; background:#f8fafc;}
-</style>
+<!-- Firebase -->
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+
 </head>
 
-<body>
+<body class="bg-slate-50">
 <div id="root"></div>
 
 <script>
 const e = React.createElement;
 
+// 🔥 ADD YOUR REAL FIREBASE CONFIG HERE
+const firebaseConfig = {
+  apiKey: "YOUR_API_KEY",
+  authDomain: "YOUR_PROJECT.firebaseapp.com",
+  projectId: "YOUR_PROJECT_ID"
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.firestore();
+
 function App() {
+  const [view, setView] = React.useState("student");
   const [name, setName] = React.useState("");
   const [task, setTask] = React.useState("");
-  const [list, setList] = React.useState([]);
+  const [tasks, setTasks] = React.useState([]);
+  const [teacherPass, setTeacherPass] = React.useState("");
+  const [teacherAuth, setTeacherAuth] = React.useState(false);
+
+  const PASSWORD = "teacher123";
+
+  // Load data
+  React.useEffect(() => {
+    const unsub = db.collection("tasks")
+      .orderBy("time","desc")
+      .onSnapshot(snap => {
+        const data = snap.docs.map(d => ({id:d.id, ...d.data()}));
+        setTasks(data);
+      });
+    return () => unsub();
+  }, []);
 
   function addTask() {
-    if (!task || !name) return;
-    setList([...list, { name, task, done:false }]);
+    if (!name || !task) return;
+
+    db.collection("tasks").add({
+      name,
+      task,
+      done:false,
+      time: Date.now()
+    });
+
     setTask("");
   }
 
-  function toggle(index) {
-    const newList = [...list];
-    newList[index].done = !newList[index].done;
-    setList(newList);
+  function toggle(id, current) {
+    db.collection("tasks").doc(id).update({
+      done: !current
+    });
   }
 
-  return e("div", { style:{padding:"20px", maxWidth:"600px", margin:"auto"} },
-    
-    e("h1", {style:{fontSize:"24px", fontWeight:"bold"}}, "ClassTracker"),
+  function remove(id) {
+    db.collection("tasks").doc(id).delete();
+  }
 
-    e("input", {
-      placeholder:"Your Name",
-      value:name,
-      onChange:(ev)=>setName(ev.target.value),
-      style:{display:"block", margin:"10px 0", padding:"10px", width:"100%"}
-    }),
+  return e("div", {className:"max-w-4xl mx-auto p-6"},
 
-    e("input", {
-      placeholder:"Assignment",
-      value:task,
-      onChange:(ev)=>setTask(ev.target.value),
-      style:{display:"block", margin:"10px 0", padding:"10px", width:"100%"}
-    }),
+    // NAV
+    e("div", {className:"flex gap-2 mb-6"},
+      e("button", {onClick:()=>setView("student"), className:"px-4 py-2 bg-white rounded shadow"}, "Student"),
+      e("button", {onClick:()=>setView("teacher"), className:"px-4 py-2 bg-white rounded shadow"}, "Teacher")
+    ),
 
-    e("button", {
-      onClick:addTask,
-      style:{padding:"10px", background:"#4f46e5", color:"white", border:"none"}
-    }, "Add"),
+    view === "student" && e("div", {},
+      e("h1", {className:"text-2xl font-bold mb-4"}, "Student View"),
 
-    e("div", {style:{marginTop:"20px"}},
-      list.map((item, i) =>
+      e("input", {
+        placeholder:"Your name",
+        value:name,
+        onChange:(ev)=>setName(ev.target.value),
+        className:"w-full p-3 mb-2 border rounded"
+      }),
+
+      e("input", {
+        placeholder:"Assignment",
+        value:task,
+        onChange:(ev)=>setTask(ev.target.value),
+        className:"w-full p-3 mb-2 border rounded"
+      }),
+
+      e("button", {
+        onClick:addTask,
+        className:"bg-indigo-600 text-white px-4 py-2 rounded mb-4"
+      }, "Add"),
+
+      tasks.map(t =>
         e("div", {
-          key:i,
-          onClick:()=>toggle(i),
-          style:{
-            padding:"10px",
-            marginBottom:"8px",
-            background:"white",
-            cursor:"pointer",
-            textDecoration: item.done ? "line-through":"none"
-          }
-        }, item.name + ": " + item.task)
+          key:t.id,
+          className:"bg-white p-3 mb-2 rounded shadow flex justify-between"
+        },
+          e("span", {
+            style:{textDecoration: t.done ? "line-through":"none"}
+          }, t.name + ": " + t.task),
+
+          e("div", {},
+            e("button", {
+              onClick:()=>toggle(t.id, t.done),
+              className:"mr-2"
+            }, "✔"),
+
+            e("button", {
+              onClick:()=>remove(t.id)
+            }, "🗑")
+          )
+        )
+      )
+    ),
+
+    view === "teacher" && e("div", {},
+      !teacherAuth ? e("div", {},
+        e("h1", {className:"text-xl mb-4"}, "Teacher Login"),
+        e("input", {
+          type:"password",
+          value:teacherPass,
+          onChange:(ev)=>setTeacherPass(ev.target.value),
+          className:"p-3 border rounded"
+        }),
+        e("button", {
+          onClick:()=>setTeacherAuth(teacherPass === PASSWORD),
+          className:"ml-2 bg-black text-white px-4 py-2 rounded"
+        }, "Login")
+      )
+      :
+      e("div", {},
+        e("h1", {className:"text-2xl font-bold mb-4"}, "Teacher Dashboard"),
+
+        tasks.map(t =>
+          e("div", {
+            key:t.id,
+            className:"bg-white p-3 mb-2 rounded shadow"
+          },
+            t.name + " → " + t.task + " (" + (t.done ? "Done":"Missing") + ")"
+          )
+        )
       )
     )
   );
