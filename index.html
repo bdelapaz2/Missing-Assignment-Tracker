@@ -22,7 +22,6 @@
         body { background-color: #f8fafc; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
         .fade-in { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        /* Prevent layout shift during icon loading */
         i[data-lucide] { display: inline-block; vertical-align: middle; }
     </style>
 </head>
@@ -32,9 +31,13 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // Use global variables provided by environment if available, otherwise use defaults
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
-            apiKey: "", // Key is provided at runtime by the environment
+        /**
+         * NOTE FOR GITHUB: These keys are for a client-side Firebase project 
+         * with public security rules enforced via Firestore. 
+         * This is intended for public deployment.
+         */
+        const firebaseConfig = {
+            apiKey: "AIzaSyAs-ExampleKeyReplaceWithActual", 
             authDomain: "canvas-artifacts.firebaseapp.com",
             projectId: "canvas-artifacts",
             storageBucket: "canvas-artifacts.firebasestorage.app",
@@ -42,7 +45,7 @@
             appId: "1:1035543717208:web:7f66a87c1817c803328e46"
         };
 
-        const CUSTOM_APP_ID = typeof __app_id !== 'undefined' ? __app_id : "bdelapaz-tracker-unique-v2";
+        const CUSTOM_APP_ID = "bdelapaz-tracker-v2";
         const SUBJECTS = ["Math", "English / ELA", "Science", "Social Studies", "Elective / PE"];
         const TEACHER_PASSWORD = "teacher123";
 
@@ -81,24 +84,18 @@
             const [taskSubject, setTaskSubject] = useState('');
             const [taskDate, setTaskDate] = useState('');
             const [loading, setLoading] = useState(true);
-            const [initError, setInitError] = useState(null);
 
             useEffect(() => {
-                const initAuth = async () => {
+                const login = async () => {
                     try {
-                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                            await auth.signInWithCustomToken(__initial_auth_token);
-                        } else {
-                            await auth.signInAnonymously();
-                        }
+                        await auth.signInAnonymously();
                     } catch (e) {
                         console.error("Auth error:", e);
-                        setInitError("Failed to authenticate. Please check your connection.");
                     } finally {
                         setLoading(false);
                     }
                 };
-                initAuth();
+                login();
                 const unsubscribe = auth.onAuthStateChanged(setUser);
                 return () => unsubscribe();
             }, []);
@@ -111,7 +108,7 @@
                     .onSnapshot(snapshot => {
                         const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
                         setAssignments(docs);
-                    }, (err) => console.error("Database Error:", err));
+                    });
                 return () => unsubscribe();
             }, [user, view]);
 
@@ -129,7 +126,7 @@
                             grouped[data.userId].tasks.push({ id: d.id, ...data });
                         });
                         setAllStudentsData(grouped);
-                    }, (err) => console.error("Teacher View Error:", err));
+                    });
                 return () => unsubscribe();
             }, [user, teacherAuth, view]);
 
@@ -138,21 +135,17 @@
                 if (!taskName || !taskSubject || !studentName || !user) return;
                 localStorage.setItem('student_display_name', studentName);
                 const path = `artifacts/${CUSTOM_APP_ID}/public/data/assignments`;
-                try {
-                    await db.collection(path).add({
-                        userId: user.uid,
-                        userName: studentName,
-                        name: taskName,
-                        subject: taskSubject,
-                        dueDate: taskDate,
-                        status: 'Missing',
-                        timestamp: Date.now()
-                    });
-                    setTaskName(''); 
-                    setTaskDate('');
-                } catch (err) {
-                    alert("Error saving assignment.");
-                }
+                await db.collection(path).add({
+                    userId: user.uid,
+                    userName: studentName,
+                    name: taskName,
+                    subject: taskSubject,
+                    dueDate: taskDate,
+                    status: 'Missing',
+                    timestamp: Date.now()
+                });
+                setTaskName(''); 
+                setTaskDate('');
             };
 
             const toggleStatus = async (item) => {
@@ -169,26 +162,10 @@
                 }
             };
 
-            if (initError) {
-                return (
-                    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-4 text-center">
-                        <div className="bg-white p-8 rounded-2xl shadow-sm max-w-sm">
-                            <Icon name="alert-circle" size={48} className="text-rose-500 mx-auto mb-4" />
-                            <h2 className="text-xl font-bold mb-2">Error</h2>
-                            <p className="text-slate-500 mb-6">{initError}</p>
-                            <button onClick={() => window.location.reload()} className="bg-indigo-600 text-white px-6 py-2 rounded-xl font-bold">Retry</button>
-                        </div>
-                    </div>
-                );
-            }
-
             if (loading) {
                 return (
-                    <div className="min-h-screen flex items-center justify-center bg-slate-50 text-slate-500">
-                        <div className="text-center">
-                            <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-                            <p>Connecting to database...</p>
-                        </div>
+                    <div className="min-h-screen flex items-center justify-center bg-slate-50">
+                        <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div>
                     </div>
                 );
             }
@@ -200,24 +177,24 @@
                             <div className="bg-indigo-600 p-1.5 rounded-lg text-white">
                                 <Icon name="check-circle" size={20} />
                             </div>
-                            <span className="font-bold text-lg md:text-xl text-slate-800">ClassTracker</span>
+                            <span className="font-bold text-lg text-slate-800">ClassTracker</span>
                         </div>
                         <div className="flex bg-slate-100 p-1 rounded-xl">
-                            <button onClick={() => setView('student')} className={`px-4 py-2 rounded-lg text-xs md:text-sm font-bold transition-all ${view === 'student' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Student</button>
-                            <button onClick={() => setView('teacher')} className={`px-4 py-2 rounded-lg text-xs md:text-sm font-bold transition-all ${view === 'teacher' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>Teacher</button>
+                            <button onClick={() => setView('student')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${view === 'student' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>Student</button>
+                            <button onClick={() => setView('teacher')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${view === 'teacher' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500'}`}>Teacher</button>
                         </div>
                     </nav>
 
                     <main className="max-w-5xl mx-auto p-4 md:p-6 mt-4">
                         {view === 'student' ? (
-                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 md:gap-8 fade-in">
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 fade-in">
                                 <div className="space-y-6">
                                     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                                        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-xs uppercase tracking-widest"><Icon name="user" size={14}/> Student Profile</h3>
-                                        <input type="text" placeholder="Your Full Name" value={studentName} onChange={e => setStudentName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500 transition-all" />
+                                        <h3 className="font-bold text-slate-700 mb-4 text-xs uppercase tracking-widest flex items-center gap-2"><Icon name="user" size={14}/> Student Profile</h3>
+                                        <input type="text" placeholder="Your Full Name" value={studentName} onChange={e => setStudentName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
                                     </div>
                                     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-                                        <h3 className="font-bold text-slate-700 mb-4 flex items-center gap-2 text-xs uppercase tracking-widest"><Icon name="plus" size={14}/> Add Missing Task</h3>
+                                        <h3 className="font-bold text-slate-700 mb-4 text-xs uppercase tracking-widest flex items-center gap-2"><Icon name="plus" size={14}/> Add Task</h3>
                                         <form onSubmit={addAssignment} className="space-y-4">
                                             <input type="text" placeholder="Assignment Name" value={taskName} onChange={e => setTaskName(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
                                             <select value={taskSubject} onChange={e => setTaskSubject(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500">
@@ -225,27 +202,24 @@
                                                 {SUBJECTS.map(s => <option key={s} value={s}>{s}</option>)}
                                             </select>
                                             <input type="date" value={taskDate} onChange={e => setTaskDate(e.target.value)} className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" />
-                                            <button type="submit" className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all active:scale-95">Add to My List</button>
+                                            <button type="submit" className="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl hover:bg-indigo-700 shadow-lg active:scale-95 transition-all">Add to List</button>
                                         </form>
                                     </div>
                                 </div>
                                 <div className="lg:col-span-2 space-y-4">
-                                    <div className="flex items-center justify-between mb-2">
-                                        <h2 className="text-xl font-bold text-slate-800">My Missing Work</h2>
-                                        <span className="bg-indigo-100 text-indigo-700 text-xs font-bold px-3 py-1 rounded-full">{assignments.filter(a => a.status === 'Missing').length} Items</span>
-                                    </div>
+                                    <h2 className="text-xl font-bold text-slate-800">My Missing Work</h2>
                                     {assignments.length === 0 ? (
-                                        <div className="bg-white p-16 rounded-3xl border-2 border-dashed border-slate-200 text-center text-slate-400">No items found.</div>
+                                        <div className="bg-white p-12 rounded-3xl border-2 border-dashed border-slate-200 text-center text-slate-400">No items found.</div>
                                     ) : (
                                         assignments.sort((a,b) => b.timestamp - a.timestamp).map(item => (
-                                            <div key={item.id} className={`bg-white p-5 rounded-2xl border-l-4 shadow-sm flex items-center justify-between transition-all hover:shadow-md ${item.status === 'Turned In' ? 'border-emerald-500 opacity-60' : 'border-indigo-500'}`}>
+                                            <div key={item.id} className={`bg-white p-5 rounded-2xl border-l-4 shadow-sm flex items-center justify-between transition-all ${item.status === 'Turned In' ? 'border-emerald-500 opacity-60' : 'border-indigo-500'}`}>
                                                 <div className="flex-1 min-w-0">
                                                     <span className="text-[10px] font-black uppercase bg-slate-100 text-slate-500 px-2 py-0.5 rounded mb-1 inline-block">{item.subject}</span>
                                                     <h3 className={`font-bold text-lg truncate ${item.status === 'Turned In' ? 'line-through text-slate-400' : 'text-slate-800'}`}>{item.name}</h3>
                                                 </div>
                                                 <div className="flex items-center gap-3">
-                                                    <button onClick={() => toggleStatus(item)} className={`${item.status === 'Turned In' ? 'text-emerald-500' : 'text-slate-300'} transition-colors`}><Icon name="check-circle" size={32} /></button>
-                                                    <button onClick={() => deleteItem(item.id)} className="text-slate-200 hover:text-rose-500 transition-colors"><Icon name="trash-2" size={20} /></button>
+                                                    <button onClick={() => toggleStatus(item)} className={`${item.status === 'Turned In' ? 'text-emerald-500' : 'text-slate-300'}`}><Icon name="check-circle" size={32} /></button>
+                                                    <button onClick={() => deleteItem(item.id)} className="text-slate-200 hover:text-rose-500"><Icon name="trash-2" size={20} /></button>
                                                 </div>
                                             </div>
                                         ))
